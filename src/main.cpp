@@ -39,13 +39,17 @@
 //****************************************************************************************************************
 //**** IMPORTANT RADIO SETTINGS - YOU MUST CHANGE/CONFIGURE TO MATCH YOUR HARDWARE TRANSCEIVER CONFIGURATION! ****
 //****************************************************************************************************************
-//#define NODEID       201  // node ID used for this unit
+//#define NODEID       203  // node ID used for this unit
 //#define NETWORKID    150
+#define GATEWAY1     1
+#define GATEWAY2     2
+#define GATEWAY3     3
+#define BROADCASTID  0
 //Match frequency to the hardware version of the radio on your Moteino (uncomment one):
 //#define FREQUENCY   RF69_433MHZ
 //#define FREQUENCY   RF69_868MHZ
 //#define FREQUENCY     RF69_915MHZ // choose this one
-//#define FREQUENCY_EXACT 905500000
+//#define FREQUENCY_EXACT 915000000
 //#define ENCRYPTKEY  "rcmhprodrcmhprod" //16-bytes or ""/0/null for no encryption
 //#define IS_RFM69HW_HCW  //uncomment only for RFM69HW/HCW! Leave out if you have RFM69W/CW!
 //*****************************************************************************************************************************
@@ -59,9 +63,10 @@
 #define BLINKPERIOD 250
 //*****************************************************************************************************************************
 
+#define VERSION     1 // What version software are we running?
 #define ANTLER_PIN   6 //PWM pin for controlling antler LEDs
 
-#define DEBUG_MODE  //uncomment to enable debug comments
+#define DEBUG_MODE true //uncomment to enable debug comments
 //#define VERSION 1    // Version of code programmed
 
 // *****************************************************************************************************************************
@@ -72,8 +77,11 @@ float tempVoltage;          //temporary value
 float actualBatteryVoltage; // calculated battery voltage
 // *****************************************************************************************************************************
 
-byte LEDSTATE = LOW; //LOW=0
-int currentState; // What is the current state of this module?
+byte nodeID; // ID for this specific node.
+byte codeVersion; // Code version stored in configuration
+//const byte version = 1; // What version software are we running?
+byte currentState; // What is the current state of this module?
+bool antlerState; // What state are the antlers currently in?
 
 SPIFlash flash(SS_FLASHMEM, FLASH_ID);
 
@@ -96,7 +104,7 @@ struct configuration {
   byte gatewayID; // 8bit address (up to 255)
   char encryptionKey[16];
   byte state;     // Just in case we want to save a state setting.
-  byte codeversion; // What version code we're using
+  byte codeVersion; // What version code we're using
 } CONFIG;
 
 // struct for packets being sent to antler hats
@@ -109,7 +117,7 @@ typedef struct {
   long  sleepTime; // In milliseconds. Used if we want to overwrite pre-defined states
   bool  sleepTimeUse; // Should we pay attention to the incoming sleep time?
 } ToAntlersPayload;
-ToAntlersPayload antlersData;
+ToAntlersPayload antlersPayload;
 
 // struct for packets being sent to controllers
 typedef struct {
@@ -121,7 +129,7 @@ typedef struct {
   int   rssi; // RSSI signal from last received transmission
   int   temperature; // Temperature of the radio
 } ToControllersPayload;
-ToControllersPayload controllersgData;
+ToControllersPayload controllersPayload;
 
 
 
@@ -134,17 +142,24 @@ void setup() {
   pinMode(ANTLER_PIN, OUTPUT);
 
   EEPROM.setMaxAllowedWrites(10000);
-  EEPROM.readBlock(0, CONFIG); pinMode(LED_BUILTIN, OUTPUT);
-
-
+  EEPROM.readBlock(0, CONFIG);
+  
+  pinMode(LED_BUILTIN, OUTPUT);
 
   Serial.begin(SERIAL_BAUD);
   delay(1000);
   radio.initialize(CONFIG.frequency,CONFIG.nodeID,CONFIG.networkID);
+
+
+//  radio.initialize(FREQUENCY,NODEID,NETWORKID);
+
+  nodeID = CONFIG.nodeID;
+  codeVersion = CONFIG.codeVersion;
+
+  radio.setFrequency(CONFIG.frequency_exact); //set frequency to some custom frequency
   radio.encrypt(CONFIG.encryptionKey); //OPTIONAL
 
-  const byte NODEID = CONFIG.nodeID;
-  radio.setFrequency(CONFIG.frequency_exact); //set frequency to some custom frequency
+  //Serial.println(CONFIG);
 
 #ifdef ENABLE_ATC
   radio.enableAutoPower(ATC_RSSI);
@@ -154,8 +169,8 @@ if (CONFIG.isHW) {
   radio.setHighPower(); //must include this only for RFM69HW/HCW!
 }
 
-  Serial.print("Start node ");
-  Serial.println(NODEID);
+  Serial.print("Starting node ");
+  Serial.println(nodeID);
 
   if (flash.initialize())
     Serial.println("SPI Flash Init OK!");
@@ -166,6 +181,12 @@ if (CONFIG.isHW) {
   Serial.println("Listening at 915 Mhz...");
   //Serial.println(buff);
   Serial.flush();
+  Serial.println(CONFIG.frequency_exact);
+  //Serial.println(FREQUENCY_EXACT);
+  Serial.println(CONFIG.networkID);
+  //Serial.println(NETWORKID);
+  Serial.println(CONFIG.encryptionKey);
+  //Serial.println(ENCRYPTKEY);
 
 #ifdef BR_300KBPS
   radio.writeReg(0x03, 0x00);  //REG_BITRATEMSB: 300kbps (0x006B, see DS p20)
@@ -176,6 +197,7 @@ if (CONFIG.isHW) {
   radio.writeReg(0x06, 0x33);  //REG_FDEVLSB: 300khz (0x1333)
   radio.writeReg(0x29, 240);   //set REG_RSSITHRESH to -120dBm
 #endif
+
 }
 
 //**************************************
@@ -185,17 +207,12 @@ if (CONFIG.isHW) {
 float BatteryVoltage()
 {
     analogBatteryValue = analogRead(BATTERY_PIN);
-    Serial.print("Raw analog value: ");
-    Serial.println(analogBatteryValue);
     tempVoltage = (float) analogBatteryValue / 1024.0 * 3.3;
      // Don't actually understand the exact math, but it's based on the resistor values (10M and 4.7M).
      // Could come back and play around with a constant for 4700.0/14700.0 instead of calculating. Calculating
      // likely more accurate?
      // actualBatteryVoltage = 1.0 / (4700.0 / (4700.0+10000.0)) * tempVoltage;
      actualBatteryVoltage = 1.0 / (4700.0 / 14700.0) * tempVoltage;
-
-    Serial.print("Battery Voltage is: ");
-    Serial.println(actualBatteryVoltage);
     return actualBatteryVoltage;
 }
 
@@ -215,62 +232,47 @@ void blinkLED(int blinkTime, int blinkNumber)
   // }
 }
 
+void sendControllerPayload(){
+  //Serial.println("Entered sendcontrollerpayload");
+  controllersPayload.nodeId = nodeID;
+  controllersPayload.version = VERSION;
+  controllersPayload.state = currentState;
+  controllersPayload.antlerState = antlerState;
+  controllersPayload.vcc = BatteryVoltage();
+  controllersPayload.rssi = radio.readRSSI();
+  controllersPayload.temperature = radio.readTemperature();
+  //Serial.println("Finished population payload struct");
+
+  radio.send(0, (const void*)(&controllersPayload), sizeof(controllersPayload));
+  //Serial.println("Sent payload");
+  //else Serial.println("Send failed for some reason"); 
+}
+
+void antlers(bool state, byte level) //0 to turn off antlers, 1 to turn on
+{
+  if (state) {
+    antlerState=1;
+    analogWrite(ANTLER_PIN, level);
+  }
+  else {
+    antlerState=false;
+    analogWrite(ANTLER_PIN, 0);
+  }
+
+}
+
 //*************************************
 // Loop                               *
 //*************************************
 
 void loop(){
 
-  #ifdef DEBUG_MODE
-    // Handle serial input (to allow basic DEBUGGING of FLASH chip)
-    // ie: display first 256 bytes in FLASH, erase chip, write bytes at first 10 positions, etc
-    if (Serial.available() > 0) {
-      input = Serial.read();
-      if (input == 'd') { //d=dump first page
-        Serial.println("Flash content:");
-        int counter = 0;
-        while(counter<=256) {
-          Serial.print(flash.readByte(counter++), HEX);
-          Serial.print('.');
-        }
-        
-        Serial.println();
-      }
-      else if (input == 'D') { //d=dump higher memory
-        Serial.println("Flash content:");
-        uint16_t counter = 4090; //dump the memory between the first 4K and second 4K sectors
-
-        while(counter<=4200) {
-          Serial.print(flash.readByte(counter++), HEX);
-          Serial.print('.');
-        }        
-        Serial.println();
-      }
-      else if (input == 'e') {
-        Serial.print("Erasing Flash chip ... ");
-        flash.chipErase();
-        while(flash.busy());
-        Serial.println("DONE");
-      }
-      else if (input == 'i') {
-        Serial.print("DeviceID: ");
-        Serial.println(flash.readDeviceId(), HEX);
-      }
-      else if (input == 'r') {
-        Serial.print("Rebooting");
-        resetUsingWatchdog(true);
-      }
-      else if (input == 'R') {
-        Serial.print("RFM69 registers:");
-        radio.readAllRegs();
-      } 
-    }    // close if Serial.available()
-  #endif // close #ifdef DEBUG_MODE
-  
   // Check for existing RF data
   if (radio.receiveDone()) {
+    //Serial.println("Received something");
 
    #ifdef DEBUG_MODE
+      Serial.println();
       Serial.print("Got [");
       Serial.print(radio.SENDERID);
       Serial.print(':');
@@ -283,44 +285,58 @@ void loop(){
 
     // Check for a new OTA sketch. If so, update will be applied and unit restarted.
     CheckForWirelessHEX(radio, flash, false);
-    
-    // Check if valid packet. In future perhaps add checking for different payload versions
-    if (radio.DATALEN != sizeof(ToAntlersPayload)) {
-      #ifdef DEBBUG_MODE
-        Serial.print("Invalid payload received, not matching Payload struct!");
+    //Serial.println("Checked for OTA update");
+
+    // Check if sender wanted an ACK
+    if (radio.ACKRequested())
+    {
+      radio.sendACK();
+      #ifdef DEBUG_MODE
+        Serial.print(" - ACK sent");
       #endif
     }
-    else
-    {
-      antlersData = *(ToAntlersPayload*)radio.DATA; // We'll hope radio.DATA actually contains our struct and not something else
+ 
+    // Check if valid packet. In future perhaps add checking for different payload versions
+    // if (radio.DATALEN != (uint8_t)sizeof(ToAntlersPayload)) {
+    //   #ifdef DEBUG_MODE
+    //     int bob = sizeof(radio.DATALEN);
+    //     int joe = sizeof(ToAntlersPayload);
+    //     Serial.println("Invalid payload received, not matching Payload struct!");
+    //     Serial.print("Payload size was: "); Serial.println(bob);
+    //     Serial.print("Payload size needs to be: "); Serial.println(joe);
+    //   #endif
+    // }
+    // else
+    // {
+      antlersPayload = *(ToAntlersPayload*)radio.DATA; // We'll hope radio.DATA actually contains our struct and not something else
 
       #ifdef DEBUG_MODE
         Serial.println("Received data from node: ");
-        Serial.println(antlersData.nodeId);
+        Serial.println(antlersPayload.nodeId);
         Serial.println("Received data is payload version: ");
-        Serial.println(antlersData.version);
+        Serial.println(antlersPayload.version);
         Serial.println("Received state is: ");
-        Serial.println(antlersData.state);
+        Serial.println(antlersPayload.state);
         Serial.println("Received antler state is: ");
-        Serial.println(antlersData.antlerState);
+        Serial.println(antlersPayload.antlerState);
         Serial.println("Received sleep time is: ");
-        Serial.println(antlersData.sleepTime);
+        Serial.println(antlersPayload.sleepTime);
       #endif
 
-      // And now for the real meat, what should we be doing right now?
+      //And now for the real meat, what should we be doing right now?
 
-      if (antlersData.state != currentState) {
-        switch (antlersData.state) {
+      if (antlersPayload.state != currentState) {
+        switch (int(antlersPayload.state)) {
           case 1:
             // This is our deep sleep state
             // We want to tell the MCU and radio to go to sleep and, if necessary, implement a counter 
             // that goes longer than 8 seconds (default arduino limit).
-            analogWrite(ANTLER_PIN, 0);
+            antlers(0,0);
             digitalWrite(LED_BUILTIN, LOW);
-            currentState = 0;
-            blinkLED(750, 1);
+            currentState = 1;
+            //blinkLED(750, 1);
             #ifdef DEBUG_MODE
-              Serial.println("Entered state 0");
+              Serial.println("Entered state 1");
             #endif
             break;
           case 2:
@@ -328,33 +344,34 @@ void loop(){
             // We want to shorten our sleep time to perhaps 1 second off, 20ms on? Experiment with on time.
             // Probably the state to go in with the handheld remotes.
             // Probably want to go back to sleep after say 2 minutes without a state change.
-            analogWrite(ANTLER_PIN, 0);
+            antlers(0,0);
             digitalWrite(LED_BUILTIN, LOW);
-            blinkLED(200,1);
-            currentState = 1;
+            //blinkLED(200,1);
+            currentState = 2;
             #ifdef DEBUG_MODE
-              Serial.println("Entered state 1");
+              Serial.println("Entered state 2");
             #endif
             break;
           case 3:
             // This is our standby to do stuff really soon state. 
             // We want to stay on full time, but go back to sleep after 2 minutes without a state change.
-            analogWrite(ANTLER_PIN, 0);
+            antlers(0,0);
             digitalWrite(LED_BUILTIN, LOW);
-            currentState = 2;
-            blinkLED(200,2);
+            currentState = 3;
+            //blinkLED(200,2);
             #ifdef DEBUG_MODE
-              Serial.println("Entered state 2");
+              Serial.println("Entered state 3");
             #endif
             break;
           case 4:
             // This is our GO GO GO state
-            analogWrite(ANTLER_PIN, 255);
+            antlers(1,255);
             digitalWrite(LED_BUILTIN, HIGH);
-            currentState = 3;
-            blinkLED(200,3);
+            currentState = 4;
+            //blinkLED(200,3);
+            sendControllerPayload();
             #ifdef DEBUG_MODE
-              Serial.println("Entered state 3");
+              Serial.println("Entered state 4");
             #endif
             break;
           case 5:
@@ -371,25 +388,17 @@ void loop(){
             break;  
           case 9:
             // This is our programming state. Major power hog. Programming takes time, not sure yet if want to auto sleep
-            analogWrite(ANTLER_PIN, 0);
+            antlers(0,0);
             digitalWrite(LED_BUILTIN, LOW);
             currentState = 9;
             #ifdef DEBUG_MODE
               Serial.println("Entered state 9");
             #endif
             break;
-        } // Close state switch
-      } // close state IF
-
-      // Check if sender wanted an ACK
-      if (radio.ACKRequested())
-      {
-        radio.sendACK();
-        #ifdef DEBUG_MODE
-          Serial.print(" - ACK sent");
-        #endif
-      }
-
+       } // Close state switch
+      } // close if state change
+    //} // close if valid payload
+  } // close radio receive done
 //*****************************************************************************************************************************
 // Can play around with dimming the LEDs. If the antlers have analogWrite value of 255, they will blink at their brightest.
 // If the analogWrite value is less than 255, they stop blinking, but you can control their brightness.
@@ -407,8 +416,26 @@ void loop(){
 //          delay(5);
 //        }
           
-    } // close valid payload
-  } // close radio.receiveDone()
+    //} // close valid payload
+  //} // close radio.receiveDone()
+
+  //  if ((int)(millis()/BLINKPERIOD) > lastPeriod)
+  // {
+  //   lastPeriod++;
+  //   digitalWrite(LED_BUILTIN, lastPeriod%2);
+  //   Serial.print("BLINKPERIOD ");Serial.println(BLINKPERIOD);
+  // }
+
+  if (Serial.available() > 0) {
+    Serial.println("Serial is available");
+    input = Serial.parseInt();
+    //int intInput = input - '0'
+
+    if (input >= 1 && input <= 9) { //0-9
+      Serial.print("\nSending state "); Serial.println(input);
+      sendControllerPayload();
+    } 
+  } // close serial
 } // close loop()
 
 
