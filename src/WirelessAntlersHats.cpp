@@ -1,73 +1,43 @@
 // **********************************************************************************
-// This sketch is an example of how wireless programming can be achieved with a Moteino
-// that was loaded with a custom 1k bootloader (DualOptiboot) that is capable of loading
-// a new sketch from an external SPI flash chip
-// The sketch includes logic to receive the new sketch 'over-the-air' and store it in
-// the FLASH chip, then restart the Moteino so the bootloader can continue the job of
-// actually reflashing the internal flash memory from the external FLASH memory chip flash image
-// The handshake protocol that receives the sketch wirelessly by means of the RFM69 radio
-// is handled by the SPIFLash/RFM69_OTA library, which also relies on the RFM69 library
-// These libraries and custom 1k Optiboot bootloader are at: http://github.com/lowpowerlab
+// Code for Radio City Music Hall Wireless Antlers Hats module
 // **********************************************************************************
-// Copyright Felix Rusu 2020, http://www.LowPowerLab.com/contact
+// Copyright 2021 Radio City Music Hall
+// Contact: Michael Sauder, michael.sauder@msg.com
+
 // **********************************************************************************
-// License
+// Changelog:
+// 
 // **********************************************************************************
-// This program is free software; you can redistribute it 
-// and/or modify it under the terms of the GNU General    
-// Public License as published by the Free Software       
-// Foundation; either version 3 of the License, or        
-// (at your option) any later version.                    
-//                                                        
-// This program is distributed in the hope that it will   
-// be useful, but WITHOUT ANY WARRANTY; without even the  
-// implied warranty of MERCHANTABILITY or FITNESS FOR A   
-// PARTICULAR PURPOSE. See the GNU General Public        
-// License for more details.                              
-//                                                        
-// Licence can be viewed at                               
-// http://www.gnu.org/licenses/gpl-3.0.txt
-//
-// Please maintain this license information along with authorship
-// and copyright notices in any redistribution of this code
-// **********************************************************************************
+
 #include <RFM69.h>         //get it here: https://github.com/lowpowerlab/RFM69
 #include <RFM69_ATC.h>     //get it here: https://github.com/lowpowerlab/RFM69
 #include <RFM69_OTA.h>     //get it here: https://github.com/lowpowerlab/RFM69
 #include <SPIFlash.h>      //get it here: https://github.com/lowpowerlab/spiflash
 #include <EEPROMex.h>      //get it here: http://playground.arduino.cc/Code/EEPROMex
-//****************************************************************************************************************
-//**** IMPORTANT RADIO SETTINGS - YOU MUST CHANGE/CONFIGURE TO MATCH YOUR HARDWARE TRANSCEIVER CONFIGURATION! ****
-//****************************************************************************************************************
+
 //#define NODEID       203  // node ID used for this unit
 //#define NETWORKID    150
 #define GATEWAY1     1
 #define GATEWAY2     2
 #define GATEWAY3     3
 #define BROADCASTID  0
-//Match frequency to the hardware version of the radio on your Moteino (uncomment one):
-//#define FREQUENCY   RF69_433MHZ
-//#define FREQUENCY   RF69_868MHZ
-//#define FREQUENCY     RF69_915MHZ // choose this one
+
+//#define FREQUENCY     RF69_915MHZ
 //#define FREQUENCY_EXACT 915000000
 //#define ENCRYPTKEY  "rcmhprodrcmhprod" //16-bytes or ""/0/null for no encryption
 //#define IS_RFM69HW_HCW  //uncomment only for RFM69HW/HCW! Leave out if you have RFM69W/CW!
-//*****************************************************************************************************************************
+
 #define ENABLE_ATC    //comment out this line to disable AUTO TRANSMISSION CONTROL
 #define ATC_RSSI      -80
 #define FLASH_ID      0xEF30  //ID for the 4Mbit Winbond W25X40CL flash chip
-//*****************************************************************************************************************************
-//#define BR_300KBPS         //run radio at max rate of 300kbps!
-//*****************************************************************************************************************************
+
 #define SERIAL_BAUD 115200
 #define BLINKPERIOD 250
-//*****************************************************************************************************************************
-
-#define VERSION     1 // What version software are we running?
-#define ANTLER_PIN   6 //PWM pin for controlling antler LEDs
-
 #define DEBUG_MODE true //uncomment to enable debug comments
-//#define VERSION 1    // Version of code programmed
+
+//#define VERSION     1 // What version software are we running?
+#define ANTLER_PIN  6 //PWM pin for controlling antler LEDs
+
 
 // *****************************************************************************************************************************
 // Setup battery monitoring
@@ -79,7 +49,6 @@ float actualBatteryVoltage; // calculated battery voltage
 
 byte nodeID; // ID for this specific node.
 byte codeVersion; // Code version stored in configuration
-//const byte version = 1; // What version software are we running?
 byte currentState; // What is the current state of this module?
 bool antlerState; // What state are the antlers currently in?
 
