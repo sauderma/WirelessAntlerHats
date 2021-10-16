@@ -68,7 +68,7 @@ struct configuration {
   byte codeVersion; // What version code we're using
   byte frequency; // What family are we working in? Basically always going to be 915Mhz in RCMH.
   long frequency_exact; // The exact frequency we're operating at.
-  byte isHW; // Is this a high power radio?
+  bool isHW; // Is this a high power radio?
   byte nodeID;    // 8bit address (up to 255)
   byte networkID; // 8bit address (up to 255)
   byte gatewayID1; // 8bit address (up to 255)
@@ -82,7 +82,7 @@ struct configuration {
 typedef struct {
   int  nodeId; // Sender node ID
   int  version; // What version payload
-  int  state; // What state should node go into?
+  int  nodeState; // What state should node go into?
   int  antlerState; // What state should the actual antlers to be in?
   long sleepTime; // In milliseconds. Used if we want to overwrite pre-defined states
 } ToAntlersPayload;
@@ -92,7 +92,7 @@ ToAntlersPayload antlersPayload;
 typedef struct {
   int  nodeId; // Sender node ID
   int  version; // What version payload
-  int  state; // What state Hat node is currently in
+  int  nodeState; // What state Hat node is currently in
   int  antlerState; // What state the antlers are currently in
   float vcc; // VCC read from battery monitor
   int   temperature; // Temperature of the radio
@@ -130,7 +130,7 @@ void setup() {
   #endif
 
   if (CONFIG.isHW) {
-    radio.setHighPower(); Only for RFM69HW/HCW. Damage may occur if enabled on non-HW/HCW nodes.
+    radio.setHighPower(); //Only for RFM69HW/HCW. Damage may occur if enabled on non-HW/HCW nodes.
   }
 
   if (flash.initialize())
@@ -195,7 +195,7 @@ void blinkLED(int blinkTime, int blinkNumber)
 void sendControllerPayload(){
   controllersPayload.nodeId = nodeID;
   controllersPayload.version = codeVersion;
-  controllersPayload.state = currentState;
+  controllersPayload.nodeState = currentState;
   controllersPayload.antlerState = antlerState;
   controllersPayload.vcc = BatteryVoltage();
   controllersPayload.temperature = radio.readTemperature();
@@ -230,7 +230,7 @@ void loop(){
   // Check for existing RF data
   if (radio.receiveDone()) {
 
-   #ifdef DEBUG_MODE
+    #ifdef DEBUG_MODE
       Serial.println();
       Serial.print("Got [");
       Serial.print(radio.SENDERID);
@@ -268,96 +268,96 @@ void loop(){
     // else
     // {
 
-      antlersPayload = *(ToAntlersPayload*)radio.DATA; // We'll hope radio.DATA actually contains our struct and not something else
+    antlersPayload = *(ToAntlersPayload*)radio.DATA; // We'll hope radio.DATA actually contains our struct and not something else
 
-      #ifdef DEBUG_MODE
-        Serial.println("Received data from node: ");
-        Serial.println(antlersPayload.nodeId);
-        Serial.println("Received data is payload version: ");
-        Serial.println(antlersPayload.version);
-        Serial.println("Received state is: ");
-        Serial.println(antlersPayload.state);
-        Serial.println("Received antler state is: ");
-        Serial.println(antlersPayload.antlerState);
-        Serial.println("Received sleep time is: ");
-        Serial.println(antlersPayload.sleepTime);
-      #endif
+    #ifdef DEBUG_MODE
+      Serial.println("Received data from node: ");
+      Serial.println(antlersPayload.nodeId);
+      Serial.println("Received data is payload version: ");
+      Serial.println(antlersPayload.version);
+      Serial.println("Received state is: ");
+      Serial.println(antlersPayload.nodeState);
+      Serial.println("Received antler state is: ");
+      Serial.println(antlersPayload.antlerState);
+      Serial.println("Received sleep time is: ");
+      Serial.println(antlersPayload.sleepTime);
+    #endif
 
-      //And now for the real meat, what should we be doing right now?
+    //And now for the real meat, what should we be doing right now?
 
-      if (antlersPayload.state != currentState) {
-        switch (int(antlersPayload.state)) {
-          case 1:
-            // This is our deep sleep state
-            // We want to tell the MCU and radio to go to sleep and, if necessary, implement a counter 
-            // that goes longer than 8 seconds (default arduino limit).
-            antlers(false,0);
-            digitalWrite(LED_BUILTIN, LOW);
-            currentState = 1;
-            sendControllerPayload();
-            #ifdef DEBUG_MODE
-              Serial.println("Entered state 1");
-            #endif
-            break;
-          case 2:
-            // This is our wake up and pay some attention state
-            // We want to shorten our sleep time to perhaps 1 second off, 20ms on? Experiment with on time.
-            // Probably the state to go in with the handheld remotes.
-            // Probably want to go back to sleep after say 2 minutes without a state change.
-            antlers(false,0);
-            digitalWrite(LED_BUILTIN, LOW);
-            currentState = 2;
-            sendControllerPayload();
-            #ifdef DEBUG_MODE
-              Serial.println("Entered state 2");
-            #endif
-            break;
-          case 3:
-            // This is our standby to do stuff really soon state. 
-            // We want to stay on full time, but go back to sleep after 2 minutes without a state change.
-            antlers(false,0);
-            digitalWrite(LED_BUILTIN, LOW);
-            currentState = 3;
-            sendControllerPayload();
-            #ifdef DEBUG_MODE
-              Serial.println("Entered state 3");
-            #endif
-            break;
-          case 4:
-            // This is our GO GO GO state
-            antlers(true,255);
-            digitalWrite(LED_BUILTIN, HIGH);
-            currentState = 4;
-            sendControllerPayload();
-            #ifdef DEBUG_MODE
-              Serial.println("Entered state 4");
-            #endif
-            break;
-          case 5:
-            // This is the state where we experiment with keeping the antlers on
-            // while sleeping the MCU and radio
-            break;
-          case 6:
-            // This is a TBD state
-            break;
-          case 7:
-            // Another TBD state. Perhaps for custom timings and antler states?
-            break;
-          case 8:
-            // Another TBD state. Perhaps for custom timings and antler states?
-            break;  
-          case 9:
-            // This is our programming state. Major power hog. Programming takes time, not sure yet if want to auto sleep
-            antlers(0,0);
-            digitalWrite(LED_BUILTIN, LOW);
-            currentState = 9;
-            sendControllerPayload();
-            #ifdef DEBUG_MODE
-              Serial.println("Entered state 9");
-            #endif
-            break;
-       } // Close switch
-      } // close if state change
+    if (antlersPayload.nodeState != currentState) {
+      switch (antlersPayload.nodeState) {
+        case 1:
+          // This is our deep sleep state
+          // We want to tell the MCU and radio to go to sleep and, if necessary, implement a counter 
+          // that goes longer than 8 seconds (default arduino limit).
+          antlers(false,0);
+          digitalWrite(LED_BUILTIN, LOW);
+          currentState = 1;
+          sendControllerPayload();
+          #ifdef DEBUG_MODE
+            Serial.println("Entered state 1");
+          #endif
+          break;
+        case 2:
+          // This is our wake up and pay some attention state
+          // We want to shorten our sleep time to perhaps 1 second off, 20ms on? Experiment with on time.
+          // Probably the state to go in with the handheld remotes.
+          // Probably want to go back to sleep after say 2 minutes without a state change.
+          antlers(false,0);
+          digitalWrite(LED_BUILTIN, LOW);
+          currentState = 2;
+          sendControllerPayload();
+          #ifdef DEBUG_MODE
+            Serial.println("Entered state 2");
+          #endif
+          break;
+        case 3:
+          // This is our standby to do stuff really soon state. 
+          // We want to stay on full time, but go back to sleep after 2 minutes without a state change.
+          antlers(false,0);
+          digitalWrite(LED_BUILTIN, LOW);
+          currentState = 3;
+          sendControllerPayload();
+          #ifdef DEBUG_MODE
+            Serial.println("Entered state 3");
+          #endif
+          break;
+        case 4:
+          // This is our GO GO GO state
+          antlers(true,255);
+          digitalWrite(LED_BUILTIN, HIGH);
+          currentState = 4;
+          sendControllerPayload();
+          #ifdef DEBUG_MODE
+            Serial.println("Entered state 4");
+          #endif
+          break;
+        case 5:
+          // This is the state where we experiment with keeping the antlers on
+          // while sleeping the MCU and radio
+          break;
+        case 6:
+          // This is a TBD state
+          break;
+        case 7:
+          // Another TBD state. Perhaps for custom timings and antler states?
+          break;
+        case 8:
+          // Another TBD state. Perhaps for custom timings and antler states?
+          break;  
+        case 9:
+          // This is our programming state. Major power hog. Programming takes time, not sure yet if want to auto sleep
+          antlers(0,0);
+          digitalWrite(LED_BUILTIN, LOW);
+          currentState = 9;
+          sendControllerPayload();
+          #ifdef DEBUG_MODE
+            Serial.println("Entered state 9");
+          #endif
+          break;
+      } // Close switch
+    } // close if state change
     //} // close if valid payload
   } // close radio receive done
 
