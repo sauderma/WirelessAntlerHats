@@ -47,10 +47,10 @@ float tempVoltage;          //temporary value
 float actualBatteryVoltage; // calculated battery voltage
 // *****************************************************************************************************************************
 
-byte nodeID; // ID for this specific node.
+byte nodeID; // ID of this node.
 byte codeVersion; // Code version stored in configuration
-byte currentState; // What is the current state of this module?
-bool antlerState; // What state are the antlers currently in?
+byte currentState; // Current state of this module?
+bool antlerState; // Current state of the antlers
 
 SPIFlash flash(SS_FLASHMEM, FLASH_ID);
 
@@ -65,35 +65,35 @@ long lastPeriod = -1;
 
 // struct for EEPROM config
 struct configuration {
+  byte codeVersion; // What version code we're using
   byte frequency; // What family are we working in? Basically always going to be 915Mhz in RCMH.
   long frequency_exact; // The exact frequency we're operating at.
-  byte isHW;
+  byte isHW; // Is this a high power radio?
   byte nodeID;    // 8bit address (up to 255)
   byte networkID; // 8bit address (up to 255)
-  byte gatewayID; // 8bit address (up to 255)
+  byte gatewayID1; // 8bit address (up to 255)
+  byte gatewayID2; // 8bit address (up to 255)
   char encryptionKey[16];
-  byte state;     // Just in case we want to save a state setting.
-  byte codeVersion; // What version code we're using
+  int state;     // Just in case we want to save a state setting.
+  
 } CONFIG;
 
 // struct for packets being sent to antler hats
 typedef struct {
-  byte  nodeId; // Sender node ID
-  byte  version; // What version payload
-  byte  state; // What state are we being told to go into?
-  bool  antlerState; // Used if we want to overwrite pre-defined states
-  bool  antlerStateUse; // Should we pay attention to the incoming Antler state?
-  long  sleepTime; // In milliseconds. Used if we want to overwrite pre-defined states
-  bool  sleepTimeUse; // Should we pay attention to the incoming sleep time?
+  int  nodeId; // Sender node ID
+  int  version; // What version payload
+  int  state; // What state should node go into?
+  int  antlerState; // What state should the actual antlers to be in?
+  long sleepTime; // In milliseconds. Used if we want to overwrite pre-defined states
 } ToAntlersPayload;
 ToAntlersPayload antlersPayload;
 
 // struct for packets being sent to controllers
 typedef struct {
-  byte  nodeId; // Sender node ID
-  byte  version; // What version payload
-  byte  state; // What state Hat node is currently in
-  bool  antlerState; // What state the antlers are currently in
+  int  nodeId; // Sender node ID
+  int  version; // What version payload
+  int  state; // What state Hat node is currently in
+  int  antlerState; // What state the antlers are currently in
   float vcc; // VCC read from battery monitor
   int   temperature; // Temperature of the radio
 } ToControllersPayload;
@@ -122,15 +122,15 @@ void setup() {
   radio.initialize(CONFIG.frequency,CONFIG.nodeID,CONFIG.networkID);
 //  radio.initialize(FREQUENCY,NODEID,NETWORKID);
 
-  radio.setFrequency(CONFIG.frequency_exact); //set frequency to some custom frequency
-  radio.encrypt(CONFIG.encryptionKey); //OPTIONAL
+  radio.setFrequency(CONFIG.frequency_exact);
+  radio.encrypt(CONFIG.encryptionKey);
 
   #ifdef ENABLE_ATC
     radio.enableAutoPower(ATC_RSSI);
   #endif
 
   if (CONFIG.isHW) {
-    radio.setHighPower(); //must include this only for RFM69HW/HCW!
+    radio.setHighPower(); Only for RFM69HW/HCW. Damage may occur if enabled on non-HW/HCW nodes.
   }
 
   if (flash.initialize())
@@ -194,7 +194,7 @@ void blinkLED(int blinkTime, int blinkNumber)
 
 void sendControllerPayload(){
   controllersPayload.nodeId = nodeID;
-  controllersPayload.version = VERSION;
+  controllersPayload.version = codeVersion;
   controllersPayload.state = currentState;
   controllersPayload.antlerState = antlerState;
   controllersPayload.vcc = BatteryVoltage();
