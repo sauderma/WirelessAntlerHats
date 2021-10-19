@@ -23,7 +23,7 @@
 #define BROADCASTID  0
 
 //#define FREQUENCY     RF69_915MHZ
-//#define FREQUENCY_EXACT 915000000
+//#define FREQUENCY_EXACT 905500000
 //#define ENCRYPTKEY  "rcmhprodrcmhprod" //16-bytes or ""/0/null for no encryption
 //#define IS_RFM69HW_HCW  //uncomment only for RFM69HW/HCW! Leave out if you have RFM69W/CW!
 
@@ -80,20 +80,20 @@ struct configuration {
 
 // struct for packets being sent to antler hats
 typedef struct {
-  int  nodeId; // Sender node ID
-  int  version; // What version payload
-  int  nodeState; // What state should node go into?
-  int  antlerState; // What state should the actual antlers to be in?
+  byte  nodeId; // Sender node ID
+  byte  version; // What version payload
+  byte  nodeState; // What state should node go into?
+  byte  antlerState; // What state should the actual antlers to be in?
   long sleepTime; // In milliseconds. Used if we want to overwrite pre-defined states
 } ToAntlersPayload;
 ToAntlersPayload antlersPayload;
 
 // struct for packets being sent to controllers
 typedef struct {
-  int  nodeId; // Sender node ID
-  int  version; // What version payload
-  int  nodeState; // What state Hat node is currently in
-  int  antlerState; // What state the antlers are currently in
+  byte  nodeId; // Sender node ID
+  byte  version; // What version payload
+  byte  nodeState; // What state Hat node is currently in
+  byte  antlerState; // What state the antlers are currently in
   float vcc; // VCC read from battery monitor
   int   temperature; // Temperature of the radio
 } ToControllersPayload;
@@ -178,14 +178,7 @@ float BatteryVoltage()
 
 void blinkLED(int blinkTime, int blinkNumber)
 {
-  // int counter = 0;
-  // while (counter <= blinkNumber) {
-  //   digitalWrite(LED_BUILTIN, HIGH);
-  //   delay(blinkTime);
-  //   digitalWrite(LED_BUILTIN, LOW);
-  //   delay(blinkTime);
-  //   counter++;
-  // }
+
 }
 
 //*************************************
