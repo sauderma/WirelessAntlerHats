@@ -71,7 +71,16 @@ SPIFlash flash(SS_FLASHMEM, FLASH_ID);
   RFM69 radio;
 #endif
 
-millisDelay sleepyTimer;
+millisDelay sleepyTimer;      // timer for counting down before going back to sleep.
+millisDelay inactionTimer;    // timer for if we go too long between state changes (perhaps out of RF range). This only works
+                              // in always-on modes, aka modes 4, 5, and 9.
+
+bool justWoke; // Did we just wake up from one of the above timers?
+
+long randomSendTime; // random send time ranging from 0-250ms, generated in setup().
+
+int sleepCounter1s; // How many times have we cycled through 8s sleeps? If too many without a reset to zero, go to state 1.
+int sleepCounter8s; // How many times have we cycled through 8s sleeps? If too many without a reset to zero, go to state 1.
 
 // struct for EEPROM config
 struct configuration {
@@ -137,11 +146,6 @@ void sendControllerPayload(){
   controllersPayload.vcc = BatteryVoltage();
   controllersPayload.temperature = radio.readTemperature();
 
-  // TODO MEDIUM-HIGH PRIORITY
-  // Implement a random timing of the send command so that all 85 nodes announcing state changes
-  // don't drown each other out. I believe tranmission takes roughly 5ms per node.
-  // Try basing on nodeID
-
   radio.send(GATEWAY1, (const void*)(&controllersPayload), sizeof(controllersPayload));
   #ifdef DEBUG_MODE
     Serial.println("Sent an RF packet");
@@ -176,30 +180,37 @@ void antlers(bool state, int level = 0)
 void powerDown(int sleepTime = 8, int wakeTime = 50)
 {
   radio.receiveDone(); // Radio must be in receive mode before sleeping.
+  //Serial.println("entering sleep");
   radio.sleep();
+
+  // Could probably chase this to a switch, not sure why I did it this way. But it works, so leaving it.
   if(currentState == 1) {
     #ifdef DEBUG_MODE
       Serial.println("Entering 8s deep sleep");
+      Serial.flush();
     #endif
-    Serial.flush();
+    sleepCounter8s++;
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF) ;
   } else if (currentState == 2 ) {
     #ifdef DEBUG_MODE
       Serial.println("Entering 8s normal sleep");
+      Serial.flush();
     #endif
-    Serial.flush();
+    sleepCounter8s++;
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
     } else if (currentState == 3 ) {
     #ifdef DEBUG_MODE
       Serial.println("Entering 1s sleep");
+      Serial.flush();
     #endif
-    Serial.flush();
+    sleepCounter1s++;
     LowPower.powerDown(SLEEP_1S, ADC_OFF, BOD_OFF);  
   } else if (currentState == 6 ) {
     #ifdef DEBUG_MODE
       Serial.println("Entering 8s sleep while antlers on");
+      Serial.flush();
     #endif
-    Serial.flush();
+    sleepCounter8s++;
     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
   }
 
@@ -208,6 +219,9 @@ void powerDown(int sleepTime = 8, int wakeTime = 50)
   #ifdef DEBUG_MODE
     Serial.println("Leaving Sleep...");
   #endif
+
+  justWoke = true;
+
 } // close powerDown()
 
 
@@ -217,111 +231,218 @@ void powerDown(int sleepTime = 8, int wakeTime = 50)
 void gotoState(int newstate)
 {
       switch (newstate) {
-      case 1:
-        // This is our deep sleep state.
-        // We want to tell the MCU and radio to go to sleep for 8 seconds, wake up for 50ms to check radio,
-        // if nothing exciting go back to sleep.
-        if (currentState != 1 ) {
+
+        case 1:
+          // This is our deep sleep state.
+          // We want to tell the MCU and radio to go to sleep for 8 seconds, wake up for 50ms to check radio,
+          // if nothing exciting go back to sleep.
+          if (currentState != 1 ) {
+            #ifdef DEBUG_MODE
+              Serial.println("Entered State 1");
+            #endif
+            antlers(false,0);
+            digitalWrite(LED_BUILTIN, LOW);
+            currentState = 1;
+            sendControllerPayload();
+            //inactionTimer.restart();
+            sleepCounter1s = 0;
+            sleepCounter8s = 0;
+            sleepyTimer.start(50);
+            inactionTimer.stop();
+          }
+          #ifdef DEBUG_MODE
+            //Serial.println("In state 1");
+          #endif
+          //powerDown(8, 50);
+          break;
+
+        case 2:
+          // This is our normal sleep state. The only difference from deep sleep is that we now send out an update
+          // every 8 seconds.
+          if (currentState != 2 ) {
+            #ifdef DEBUG_MODE
+              Serial.println("Entered State 2");
+            #endif
+            antlers(false,0);
+            digitalWrite(LED_BUILTIN, LOW);
+            currentState = 2;
+            //inactionTimer.restart();
+            sleepCounter1s = 0;
+            sleepCounter8s = 0;
+            sleepyTimer.start(50);
+            inactionTimer.stop();
+          }
+          #ifdef DEBUG_MODE
+            //Serial.println("In state 2");
+          #endif
+          if (justWoke) {
+            sendControllerPayload();
+          }
+          //powerDown(8, 50);
+          break;
+
+        case 3:
+          // This is our wake up and pay some attention state. Wake for 50ms, sleep for 1 second.
+          // We will call this ~12 seconds before we trigger the antlers ON.
+
+          if (currentState != 3) {
+            #ifdef DEBUG_MODE
+              Serial.println("Entered State 3");
+            #endif
+            antlers(false, 0);
+            digitalWrite(LED_BUILTIN, LOW);
+            currentState = 3;
+            sendControllerPayload();
+            //inactionTimer.restart();
+            sleepCounter1s = 0;
+            sleepCounter8s = 0;
+            sleepyTimer.start(50);
+            inactionTimer.stop();
+          }
+          //powerDown(1, 50);
+          #ifdef DEBUG_MODE
+            //Serial.println("In state 3");
+          #endif
+
+          if (sleepCounter1s == 4) {
+            sendControllerPayload();
+          }
+
+          break;
+
+        case 4:
+          // This is our standby to do stuff really soon state. We'll call this ~2 seconds before we trigger the antlers ON.
+          // We want to stay on full time, no sleep cycle.
+
+          if (currentState != 4) {
+            #ifdef DEBUG_MODE
+              Serial.println("Entered State 4");
+            #endif
+            
+            antlers(false,0);
+            digitalWrite(LED_BUILTIN, LOW);
+            currentState = 4;
+            sendControllerPayload();
+            sleepCounter1s = 0;
+            sleepCounter8s = 0;
+            sleepyTimer.stop();
+            inactionTimer.start(120000);
+          }
+          #ifdef DEBUG_MODE
+            //Serial.println("In state 4");
+          #endif
+          break;
+
+        case 5:
+          // This is our GO GO GO state
+          if (currentState !=5) {
+            #ifdef DEBUG_MODE
+              Serial.println("Entered State 5");
+            #endif
+            
+            antlers(true,255);
+            digitalWrite(LED_BUILTIN, HIGH);
+            currentState = 5;
+            delay(randomSendTime);
+            sendControllerPayload();
+            sleepCounter1s = 0;
+            sleepCounter8s = 0;
+            sleepyTimer.stop();
+            inactionTimer.start(120000);
+          }
+          #ifdef DEBUG_MODE
+            //Serial.println("In state 5");
+          #endif
+          break;
+
+        case 6:
+          // This is our GO GO GO state but with the MCU and radio turned off for 8 seconds after enabling the antlers
+          if (currentState !=6 ) {
+            #ifdef DEBUG_MODE
+              Serial.println("Entered State 6");
+            #endif
+            
+            antlers(true,255);
+            digitalWrite(LED_BUILTIN, HIGH);
+            currentState = 6;
+            delay(randomSendTime);
+            sendControllerPayload();
+            sleepCounter1s = 0;
+            sleepCounter8s = 0;
+            sleepyTimer.start(50);
+            inactionTimer.stop();
+          }
+
+          if (justWoke) {
+            sendControllerPayload();
+          }
+
+          #ifdef DEBUG_MODE
+            //Serial.println("In state 6");
+          #endif
+          //powerDown(50);
+          break;
+
+        case 7:
+          // Another TBD state. Perhaps for custom timings and antler states?
+          break;
+
+        case 8:
+          // This is a query state (aka command) that does nothing but radio out the current state of affairs without making any changes.
+          sendControllerPayload();
+          break;
+
+        case 9:
+          // This is our programming state. Major power hog. Programming takes time, so long inaction timer.
           antlers(false,0);
           digitalWrite(LED_BUILTIN, LOW);
-          currentState = 1;
+          flash.wakeup();
+          currentState = 9;
+          delay(randomSendTime);
           sendControllerPayload();
-        }
-        #ifdef DEBUG_MODE
-          Serial.println("In state 1");
-        #endif
-        powerDown(8, 50);
-        break;
-      case 2:
-        // This is our normal sleep state. The only difference from deep sleep is that we now send out an update
-        // every 8 seconds.
-        if (currentState != 2 ) {
-          antlers(false,0);
-          digitalWrite(LED_BUILTIN, LOW);
-          currentState = 2;
-        }
-        #ifdef DEBUG_MODE
-          Serial.println("In state 2");
-        #endif
-        sendControllerPayload();
-        powerDown(8, 50);
-        break;
-      case 3:
-        // This is our wake up and pay some attention state. Wake for 50ms, sleep for 1 second.
-        // We will call this 12 seconds before we trigger the antlers ON.
-        // TODO PRIORITY 2 - go back to sleep (state 1) after 2 minutes without receiving a state change.
-        if (currentState != 3) {
-          antlers(false, 0);
-          digitalWrite(LED_BUILTIN, LOW);
-          currentState = 3;
-          sendControllerPayload();
-        }
-        powerDown(1, 50);
-        #ifdef DEBUG_MODE
-          Serial.println("In state 3");
-        #endif
-        break;
-      case 4:
-        // This is our standby to do stuff really soon state. We'll call this 2 seconds before we trigger the antlers ON.
-        // We want to stay on full time, no sleep cycle.
-        // TODO PRIORITY 2: go back to sleep after 2 minutes without a received state change.
-        if (currentState != 4) {
           sleepyTimer.stop();
-          antlers(false,0);
-          digitalWrite(LED_BUILTIN, LOW);
-          currentState = 4;
-          sendControllerPayload();
-        }
-        #ifdef DEBUG_MODE
-          Serial.println("Entered state 4");
-        #endif
-        break;
-      case 5:
-        // This is our GO GO GO state
-        if (currentState !=5) {
-          sleepyTimer.stop();
-          antlers(true,255);
-          digitalWrite(LED_BUILTIN, HIGH);
-          currentState = 5;
-          sendControllerPayload();
-        }
-        #ifdef DEBUG_MODE
-          Serial.println("Entered state 5");
-        #endif
-        break;
-      case 6:
-        // This is our GO GO GO state but with the MCU and radio turned off after enabling the antlers
-        if (currentState !=6 ) {
-          sleepyTimer.stop();
-          antlers(true,255);
-          digitalWrite(LED_BUILTIN, HIGH);
-          currentState = 6;
-          sendControllerPayload();
-        }
-        #ifdef DEBUG_MODE
-          Serial.println("Entered state 6");
-        #endif
-        powerDown(50);
-        break;
-      case 7:
-        // Another TBD state. Perhaps for custom timings and antler states?
-        break;
-      case 8:
-        // This is a query state (aka command) that does nothing but radio out the current state of affairs without making any changes.
-        sendControllerPayload();
-        break;  
-      case 9:
-        // This is our programming state. Major power hog. Programming takes time, not sure yet if want to auto sleep
-        antlers(false,0);
-        digitalWrite(LED_BUILTIN, LOW);
-        flash.wakeup();
-        currentState = 9;
-        sendControllerPayload();
-        #ifdef DEBUG_MODE
-          Serial.println("Entered state 9");
-        #endif
-        break;
-    } // Close switch
+          inactionTimer.start(1800000);
+          #ifdef DEBUG_MODE
+            Serial.println("In state 9");
+          #endif
+          break;
+
+        // case 10:
+        //   // This is our deep sleep state. Doesn't come out of it for some reason...
+        //   if (currentState !=10 ) {
+        //     antlers(false,0);
+        //     digitalWrite(LED_BUILTIN, LOW);
+        //     currentState = 10;
+        //     delay(randomSendTime);
+        //     sendControllerPayload();
+        //     sleepCounter1s = 0;
+        //     sleepCounter8s = 0;
+        //     sleepyTimer.stop();
+        //     inactionTimer.stop();
+        //     #ifdef DEBUG_MODE
+        //       Serial.println("In state 10, deeeeep sleep.");
+        //     #endif
+        //   }
+
+        //   int count = 0;
+
+        //   flash.sleep();
+        //   radio.receiveDone(); // must call before putting radio to sleep.
+        //   radio.sleep();
+
+        //   //This sticks us in a deep long sleep, 10ish minutes if looping 76 times.
+        //   while (count < 76) {
+        //     count++;
+        //     Serial.flush();
+        //     delay(500);
+        //     Serial.println(count);
+        //     LowPower.powerDown(SLEEP_8S, ADC_OFF, BOD_OFF);
+        //   }
+
+        //   sleepyTimer.start(50);
+
+        //   break;
+      } // Close switch
 }
 
 
@@ -401,11 +522,17 @@ void setup() {
     radio.writeReg(0x29, 240);   //set REG_RSSITHRESH to -120dBm
   #endif
 
+  randomSeed(analogRead(0));
+  randomSendTime = random(1,250);
+
   antlers(true, 255);
   delay (500);
   antlers(false, 0);
 
+  inactionTimer.start(120000); // after 2 minutes with no state change, go to sleep. NOTE: this only works in fully awake modes...
+  
   currentState = 1;
+  sendControllerPayload();
   powerDown(8, 50);
 } // close setup()
 
@@ -417,30 +544,58 @@ void setup() {
 
 void loop(){
 
-  if(sleepyTimer.justFinished()) {
+  if (sleepyTimer.justFinished()) {
+    //Serial.println("sleepyTimer finished");
     powerDown(50);
   }
+
+   // This timer is for the states where we're on full time.
+   if (inactionTimer.justFinished()) {
+    //Serial.println("inactionTimer finished");
+     
+    // If you don't do this the next loop around will reset the state to whatever the last
+    // radio packet was, which arrived 2+ minutes ago. If we're receiving a stream of unchanging packets,
+    // we will quickly revert to that incoming state.
+    antlersPayload.nodeState = 1;
+    
+    gotoState(1);
+  }
+
+  // This timer is for the times we go to sleep and timers based on millis don't work.
+  if ((sleepCounter1s == 120) || (sleepCounter8s == 15)) {
+    //Serial.println("sleepCounter1s or sleepCounter8s triggered");
+
+    sleepCounter1s = 0;
+    sleepCounter8s = 0;
+     
+    // If you don't do this the next loop around will reset the state to whatever the last
+    // radio packet was, which arrived 2+ minutes ago. If we're receiving a stream of unchanging packets,
+    // we will quickly revert to that incoming state.
+    antlersPayload.nodeState = 1;
+    
+    gotoState(1);
+  }
+
+
   // Check for existing RF data
   if (radio.receiveDone()) {
 
-    #ifdef DEBUG_MODE
-      Serial.println();
-      Serial.print("Got [");
-      Serial.print(radio.SENDERID);
-      Serial.print(':');
-      Serial.print(radio.DATALEN);
-      Serial.print("] > ");
-      for (byte i = 0; i < radio.DATALEN; i++)
-        Serial.print((char)radio.DATA[i], HEX);
-      Serial.println();
-    #endif
+    // #ifdef DEBUG_MODE
+    //   Serial.println();
+    //   Serial.print("Got [");
+    //   Serial.print(radio.SENDERID);
+    //   Serial.print(':');
+    //   Serial.print(radio.DATALEN);
+    //   Serial.print("] > ");
+    //   for (byte i = 0; i < radio.DATALEN; i++)
+    //     Serial.print((char)radio.DATA[i], HEX);
+    //   Serial.println();
+    // #endif
 
     // Check for a new OTA sketch. If so, update will be applied and unit restarted.
     // KEEP THIS AT TOP OF receiveDone() LOOP.
     CheckForWirelessHEX(radio, flash, false);
-    //Serial.println("Checked for OTA update");
 
-    // Check if sender wanted an ACK. Doesn't mean we processed the packet correctly internally, just that we got it.
     if (radio.ACKRequested())
     {
       radio.sendACK();
@@ -449,148 +604,27 @@ void loop(){
       #endif
     }
  
-    // Check if valid packet. In future perhaps add checking for different payload versions
-    //
-    // TODO HIGH PRIORITY - fix this, it's not working.
-    //
-    // if (radio.DATALEN != (uint8_t)sizeof(ToAntlersPayload)) {
-    //   #ifdef DEBUG_MODE
-    //     int bob = sizeof(radio.DATALEN);
-    //     int joe = sizeof(ToAntlersPayload);
-    //     Serial.println("Invalid payload received, not matching Payload struct!");
-    //     Serial.print("Payload size was: "); Serial.println(bob);
-    //     Serial.print("Payload size needs to be: "); Serial.println(joe);
-    //   #endif
-    // }
-    // else
-    // {
+    // TODO: Add check if valid packet (easiest solution, compare radio.DATA size to struct).
+    // In future perhaps add checking for different payload versions
 
     antlersPayload = *(ToAntlersPayload*)radio.DATA; // We'll hope radio.DATA actually contains our struct and not something else
 
-    #ifdef DEBUG_MODE
-      Serial.print("Received data from node: "); Serial.println(antlersPayload.nodeId);
-      Serial.print("Received data is payload version: "); Serial.println(antlersPayload.version);
-      Serial.print("Received state is: "); Serial.println(antlersPayload.nodeState);
-      Serial.print("Received antler state is: "); Serial.println(antlersPayload.antlerState);
-      Serial.print("Received sleep time is: "); Serial.println(antlersPayload.sleepTime);
-    #endif
-    
-    //int nodeSleeper = 1;
-    //nodeSleeper = rand() % 10 + 1;
-    
-    gotoState(antlersPayload.nodeState);
-
-
-    // switch (antlersPayload.nodeState) {
-    //   case 1:
-    //     // This is our deep sleep state.
-    //     // We want to tell the MCU and radio to go to sleep for 8 seconds, wake up for 50ms to check radio,
-    //     // if nothing exciting go back to sleep.
-    //     if (currentState != 1 ) {
-    //       antlers(false,0);
-    //       digitalWrite(LED_BUILTIN, LOW);
-    //       currentState = 1;
-    //       sendControllerPayload();
-    //     }
-    //     #ifdef DEBUG_MODE
-    //       Serial.println("In state 1");
-    //     #endif
-    //     powerDown(8, 50);
-    //     break;
-    //   case 2:
-    //     // This is our normal sleep state. The only difference from deep sleep is that we now send out an update
-    //     // every 8 seconds.
-    //     if (currentState != 2 ) {
-    //       antlers(false,0);
-    //       digitalWrite(LED_BUILTIN, LOW);
-    //       currentState = 2;
-          
-    //     }
-    //     #ifdef DEBUG_MODE
-    //       Serial.println("In state 2");
-    //     #endif
-    //     sendControllerPayload();
-    //     powerDown(8, 50);
-    //     break;
-    //   case 3:
-    //     // This is our wake up and pay some attention state. We will call this 12 seconds before we trigger the antlers ON.
-    //     // TODO PRIORITY 2 - go back to sleep (state 1) after 2 minutes without receiving a state change.
-    //     if (currentState != 3) {
-    //       antlers(false, 0);
-    //       digitalWrite(LED_BUILTIN, LOW);
-    //       currentState = 3;
-    //       sendControllerPayload();
-    //     }
-    //     powerDown(1, 50);
-    //     #ifdef DEBUG_MODE
-    //       Serial.println("In state 3");
-    //     #endif
-    //     break;
-    //   case 4:
-    //     // This is our standby to do stuff really soon state. We'll call this 2 seconds before we trigger the antlers ON.
-    //     // We want to stay on full time, no sleep cycle.
-    //     // TODO PRIORITY 2: go back to sleep after 2 minutes without a received state change.
-    //     if (currentState != 4) {
-    //       sleepyTimer.stop();
-    //       antlers(false,0);
-    //       digitalWrite(LED_BUILTIN, LOW);
-    //       currentState = 4;
-    //       sendControllerPayload();
-    //     }
-    //     #ifdef DEBUG_MODE
-    //       Serial.println("Entered state 4");
-    //     #endif
-    //     break;
-    //   case 5:
-    //     // This is our GO GO GO state
-    //     if (currentState !=5) {
-    //       sleepyTimer.stop();
-    //       antlers(true,255);
-    //       digitalWrite(LED_BUILTIN, HIGH);
-    //       currentState = 5;
-    //       sendControllerPayload();
-    //     }
-    //     #ifdef DEBUG_MODE
-    //       Serial.println("Entered state 5");
-    //     #endif
-    //     break;
-    //   case 6:
-    //     // This is our GO GO GO state but with the MCU and radio turned off after enabling the antlers
-    //     if (currentState !=6 ) {
-    //       sleepyTimer.stop();
-    //       antlers(true,255);
-    //       digitalWrite(LED_BUILTIN, HIGH);
-    //       currentState = 6;
-    //       sendControllerPayload();
-    //     }
-    //     #ifdef DEBUG_MODE
-    //       Serial.println("Entered state 6");
-    //     #endif
-    //     powerDown(50);
-    //     break;
-    //   case 7:
-    //     // Another TBD state. Perhaps for custom timings and antler states?
-    //     break;
-    //   case 8:
-    //     // This is a query state (aka command) that does nothing but radio out the current state of affairs without making any changes.
-    //     sendControllerPayload();
-    //     break;  
-    //   case 9:
-    //     // This is our programming state. Major power hog. Programming takes time, not sure yet if want to auto sleep
-    //     antlers(false,0);
-    //     digitalWrite(LED_BUILTIN, LOW);
-    //     flash.wakeup();
-    //     currentState = 9;
-    //     sendControllerPayload();
-    //     #ifdef DEBUG_MODE
-    //       Serial.println("Entered state 9");
-    //     #endif
-    //     break;
-    // } // Close switch
-
-
+    // #ifdef DEBUG_MODE
+    //   Serial.print("Received data from node: "); Serial.println(antlersPayload.nodeId);
+    //   Serial.print("Received data is payload version: "); Serial.println(antlersPayload.version);
+    //   Serial.print("Received state is: "); Serial.println(antlersPayload.nodeState);
+    //   Serial.print("Received antler state is: "); Serial.println(antlersPayload.antlerState);
+    //   Serial.print("Received sleep time is: "); Serial.println(antlersPayload.sleepTime);
+    // #endif
 
   } // close radio receive done
+
+  gotoState(antlersPayload.nodeState);
+
+  if (justWoke) {
+    justWoke = false;
+  }
+
 } // close loop()
 
 
