@@ -34,7 +34,7 @@
 #define FREQUENCY_EXACT 905500000 // Move away from the default exact 915Mhz, presumably less interference
 #define ENCRYPTKEY  "rcmhprodrcmhprod" //16-bytes or ""/0/null for no encryption
 #define IS_RFM69HW_HCW //uncomment only for RFM69HW/HCW! Leave out if you have RFM69W/CW!
-#define VERSION     1 // What version software are we running?
+#define VERSION     2 // What version software are we running?
 
 // *****************************************************************************************
 
@@ -509,8 +509,10 @@ void setup() {
   Serial.print("On network ID: "); Serial.println(NETWORKID);
   Serial.print("Using encryption key: "); Serial.println(ENCRYPTKEY);
   Serial.print("On frequency: "); Serial.println(FREQUENCY_EXACT);
-  Serial.print("Using high power mode: "); Serial.println(IS_RFM69HW_HCW);
-
+  #ifdef IS_RFM69HW_HCW
+    Serial.println("Using high power mode: Yes");
+  #endif
+  Serial.print("Running Version: "); Serial.println(VERSION);
 
   #ifdef BR_300KBPS
     radio.writeReg(0x03, 0x00);  //REG_BITRATEMSB: 300kbps (0x006B, see DS p20)
